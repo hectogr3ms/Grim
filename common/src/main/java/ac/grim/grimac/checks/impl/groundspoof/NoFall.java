@@ -31,8 +31,11 @@ public class NoFall extends Check implements PacketReceiveListener {
         if (event.getPacketType() == PacketType.Play.Client.PLAYER_FLYING || event.getPacketType() == PacketType.Play.Client.PLAYER_ROTATION) {
             // The player hasn't spawned yet
             if (player.getSetbackTeleportUtil().insideUnloadedChunk()) return;
-            // The player has already been flagged, and
+            // The player has already been flagged, and a setback is pending.
             if (player.getSetbackTeleportUtil().blockOffsets) return;
+            // GroundSpoof already ignores the first packet after a server teleport; NoFall
+            // must do the same because that packet can still carry the pre-teleport ground flag.
+            if (player.packetStateData.lastPacketWasTeleport) return;
 
             WrapperPlayClientPlayerFlying wrapper = new WrapperPlayClientPlayerFlying(event);
 

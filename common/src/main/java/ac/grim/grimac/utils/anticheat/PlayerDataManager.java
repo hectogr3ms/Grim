@@ -30,10 +30,17 @@ public class PlayerDataManager {
     }
 
     private final Set<User> exemptUsers = ConcurrentHashMap.newKeySet();
+    // Reload grace lives apart from permanent exemptions so the per-tick permission
+    // refresh cannot wipe it, and so clearing it cannot lift a real grim.exempt grant.
+    private final Set<User> temporaryExemptUsers = ConcurrentHashMap.newKeySet();
     private final ConcurrentHashMap<User, GrimPlayer> playerDataMap = new ConcurrentHashMap<>();
 
     public boolean isExemptUser(@Nullable User user) {
-        return user != null && exemptUsers.contains(user);
+        return user != null && (exemptUsers.contains(user) || temporaryExemptUsers.contains(user));
+    }
+
+    public boolean isTemporaryExemptUser(@Nullable User user) {
+        return user != null && temporaryExemptUsers.contains(user);
     }
 
     public void exemptUser(@Nullable User user) {
@@ -41,9 +48,20 @@ public class PlayerDataManager {
         exemptUsers.add(user);
     }
 
+    public void exemptTemporarily(@Nullable User user) {
+        if (user == null) return;
+        temporaryExemptUsers.add(user);
+    }
+
+    public boolean clearTemporaryExemption(@Nullable User user) {
+        if (user == null) return false;
+        return temporaryExemptUsers.remove(user);
+    }
+
     public boolean clearExemptions(@Nullable User user) {
         if (user == null) return false;
-        return exemptUsers.remove(user);
+        boolean removed = exemptUsers.remove(user);
+        return temporaryExemptUsers.remove(user) || removed;
     }
 
     @Nullable
@@ -65,19 +83,14 @@ public class PlayerDataManager {
     }
 
     public boolean shouldCheck(@NotNull User user) {
-        if (isExemptUser(user)) return false;
+        // A reload exemption is temporary and must not be mistaken for a stale
+        // grim.exempt grant.
+        if (temporaryExemptUsers.contains(user)) return false;
         if (!ChannelHelper.isOpen(user.getChannel())) return false;
 
         if (user.getUUID() != null) {
             // Bedrock players don't have Java movement
             if (GeyserUtil.isBedrockPlayer(user.getUUID())) {
-                exemptUser(user);
-                return false;
-            }
-
-            // Has exempt permission
-            GrimPlayer grimPlayer = GrimAPI.INSTANCE.getPlayerDataManager().getPlayer(user);
-            if (grimPlayer != null && grimPlayer.hasPermission("grim.exempt")) {
                 exemptUser(user);
                 return false;
             }
@@ -88,6 +101,21 @@ public class PlayerDataManager {
                 exemptUser(user);
                 return false;
             }
+        }
+
+        GrimPlayer player = playerDataMap.get(user);
+        if (player != null && player.hasPermission("grim.exempt")) {
+            exemptUser(user);
+            return false;
+        }
+
+        // The player was exempt through grim.exempt and the permission is gone. Remove
+        // the stale entry and restore the player's cached state before resuming checks.
+        // Wait for platformPlayer: without it the permission lookup is always false.
+        if (isExemptUser(user)) {
+            if (player == null || player.platformPlayer == null) return false;
+            clearExemptions(user);
+            player.updatePermissions();
         }
 
         return true;

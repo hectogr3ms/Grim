@@ -140,9 +140,9 @@ bukkit {
     apiVersion = "1.13"
     foliaSupported = true
 
-    if (!BuildConfig.shadePE) {
-        depend = listOf("packetevents")
-    }
+    // PacketEvents must inject before Grim. Goliath's fake-coordinate listener runs in
+    // PacketEvents, and this keeps Grim on real coordinates even though it bundles its own copy.
+    depend = listOf("packetevents")
 
     softDepend = listOf(
         "ProtocolLib",

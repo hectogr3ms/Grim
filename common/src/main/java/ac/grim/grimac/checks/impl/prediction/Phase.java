@@ -27,7 +27,10 @@ public class Phase extends Check implements PostPredictionListener {
 
     @Override
     public void onPredictionComplete(final PredictionComplete predictionComplete) {
-        if (!player.getSetbackTeleportUtil().blockOffsets && !predictionComplete.getData().isTeleport() && predictionComplete.isChecked()) { // Not falling through world
+        // Pistons and glitchy blocks can move a collision box into the player's new
+        // bounding box without the player actually phasing through it.
+        if (!player.exemptOnGround() && !player.getSetbackTeleportUtil().blockOffsets
+                && !predictionComplete.getData().isTeleport() && predictionComplete.isChecked()) { // Not falling through world
             SimpleCollisionBox newBB = player.boundingBox;
 
             List<SimpleCollisionBox> boxes = new ArrayList<>();

@@ -22,13 +22,15 @@ public record DefaultResyncHandler(GrimPlayer player) implements ResyncHandler {
             return;
 
         if (player.platformPlayer == null) return;
-        // TODO this is not technically thread safe
-        final PlatformWorld world = player.platformPlayer.getWorld();
 
-        // Takes 0.15ms or so to complete. Not bad IMO. Unsure how I could improve this other than sending packets async.
-        // But that's on PacketEvents.
-        GrimAPI.INSTANCE.getScheduler().getRegionScheduler().execute(GrimAPI.INSTANCE.getGrimPlugin(), world,
-                minBlockX >> 4, minBlockZ >> 4, () -> {
+        // Run on the entity's scheduler so the world read and the resync happen on the
+        // region that owns the player, even while a world change is in flight.
+        GrimAPI.INSTANCE.getScheduler().getEntityScheduler().execute(
+                player.platformPlayer, GrimAPI.INSTANCE.getGrimPlugin(), () -> {
+                    if (player.platformPlayer == null) return;
+                    final PlatformWorld world = player.platformPlayer.getWorld();
+                    if (world == null) return;
+
                     // Player hasn't spawned, don't spam packets
                     if (!player.getSetbackTeleportUtil().hasAcceptedSpawnTeleport) return;
 
@@ -92,7 +94,7 @@ public record DefaultResyncHandler(GrimPlayer player) implements ResyncHandler {
                             }
                         }
                     }
-                });
+                }, null, 1);
     }
 
     // TODO (Cross-platform) make this use player.resyncHandler instead
@@ -103,32 +105,28 @@ public record DefaultResyncHandler(GrimPlayer player) implements ResyncHandler {
         final int chunkZ = z >> 4;
         if (!player.compensatedWorld.isChunkLoaded(chunkX, chunkZ)) return;
 
-        // TODO this is not technically thread safe, but to trigger race condition requires
-        // 0. Client to flag a Blockbreak check (to trigger calling this method)
-        // 1. Get World (netty thread accessing main/region thread resource)
-        // 2. main/region thread world changes
-        // 3. Scheduler executes on wrong region thread (old world)
-        // In other words they need to flag a blockbreak check at just the right moment while transitioning between worlds
-        // In the future we should replace with completable-future for getting player world that runs on the region thread
-        final PlatformWorld world = player.platformPlayer.getWorld();
+        // Run on the entity scheduler: the world is read on the region that owns the
+        // player, so a concurrent world change cannot schedule this on the old world.
+        GrimAPI.INSTANCE.getScheduler().getEntityScheduler().execute(
+                player.platformPlayer, GrimAPI.INSTANCE.getGrimPlugin(), () -> {
+                    if (player.platformPlayer == null || !player.platformPlayer.isOnline()
+                            || !player.getSetbackTeleportUtil().hasAcceptedSpawnTeleport)
+                        return;
 
-        GrimAPI.INSTANCE.getScheduler().getRegionScheduler().execute(GrimAPI.INSTANCE.getGrimPlugin(), world, chunkX, chunkZ, () -> {
-            if (!player.platformPlayer.isOnline() || !player.getSetbackTeleportUtil().hasAcceptedSpawnTeleport)
-                return;
-            if (player.platformPlayer.distanceSquared(x, y, z) >= 64 * 64)
-                return;
-            if (!world.isChunkLoaded(chunkX, chunkZ)) return; // Don't load chunks sync
+                    final PlatformWorld world = player.platformPlayer.getWorld();
+                    if (world == null) return;
+                    if (player.platformPlayer.distanceSquared(x, y, z) >= 64 * 64) return;
+                    if (!world.isChunkLoaded(chunkX, chunkZ)) return; // Don't load chunks sync
 
-            final int blockId = world.getChunkAt(chunkX, chunkZ).getBlockID(x & 15, y, z & 15);
+                    final int blockId = world.getChunkAt(chunkX, chunkZ).getBlockID(x & 15, y, z & 15);
 
-            player.runSafely(() -> {
-                player.user.sendPacket(new WrapperPlayServerBlockChange(new Vector3i(x, y, z), blockId));
-                if (PacketEvents.getAPI().getServerManager().getVersion().isNewerThanOrEquals(ServerVersion.V_1_19)) { // Via will handle this for us pre-1.19
-                    player.user.sendPacket(new WrapperPlayServerAcknowledgeBlockChanges(sequence)); // Make 1.19 clients apply the changes
-                }
-            });
-
-        });
+                    player.runSafely(() -> {
+                        player.user.sendPacket(new WrapperPlayServerBlockChange(new Vector3i(x, y, z), blockId));
+                        if (PacketEvents.getAPI().getServerManager().getVersion().isNewerThanOrEquals(ServerVersion.V_1_19)) { // Via will handle this for us pre-1.19
+                            player.user.sendPacket(new WrapperPlayServerAcknowledgeBlockChanges(sequence)); // Make 1.19 clients apply the changes
+                        }
+                    });
+                }, null, 1);
     }
 
     @Override

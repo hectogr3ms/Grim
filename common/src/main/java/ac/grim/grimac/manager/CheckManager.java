@@ -66,6 +66,7 @@ import org.jetbrains.annotations.NotNull;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class CheckManager implements BasicReloadable {
@@ -288,6 +289,14 @@ public class CheckManager implements BasicReloadable {
             if (processor instanceof PostFlyingBlockBreakListener postFlyingBlockBreakListener) postFlyingBlockBreakListeners.add(postFlyingBlockBreakListener);
         }
 
+        // SetbackBlocker cancels movement while a setback is pending. It must be the
+        // last packet listener so cancelled movement cannot reach the checks after it.
+        SetbackBlocker setbackBlocker = processors.getInstance(SetbackBlocker.class);
+        if (setbackBlocker != null) {
+            packetReceiveListeners.remove(setbackBlocker);
+            packetReceiveListeners.add(setbackBlocker);
+        }
+
         checks.trimToSize();
         this.checks = Collections.unmodifiableCollection(checks);
         this.preViaPacketReceiveListeners = preViaPacketReceiveListeners.toArray(new PreViaPacketReceiveListener[preViaPacketReceiveListeners.size()]);
@@ -450,7 +459,7 @@ public class CheckManager implements BasicReloadable {
 
         for (final AbstractCheck check : checks) {
             if (check.getConfigName() == null) continue;
-            final String id = check.getConfigName().toLowerCase();
+            final String id = check.getConfigName().toLowerCase(Locale.ROOT);
             for (String permissionName : permissions) {
                 GrimAPI.INSTANCE.getPermissionManager().registerPermission(permissionName + id, PermissionDefaultValue.FALSE);
             }

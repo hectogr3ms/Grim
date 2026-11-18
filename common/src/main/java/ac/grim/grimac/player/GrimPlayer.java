@@ -581,7 +581,11 @@ public class GrimPlayer implements GrimUser {
             timedOut();
         }
 
-        if (!GrimAPI.INSTANCE.getPlayerDataManager().shouldCheck(user)) {
+        // Keep exempt players tracked. A grim.exempt player must stay so a revoked
+        // permission can be noticed, and a reload grace player is still checked afterwards.
+        if (!GrimAPI.INSTANCE.getPlayerDataManager().shouldCheck(user)
+                && !hasPermission("grim.exempt")
+                && !GrimAPI.INSTANCE.getPlayerDataManager().isExemptUser(user)) {
             GrimAPI.INSTANCE.getPlayerDataManager().remove(user);
         }
 
@@ -658,7 +662,8 @@ public class GrimPlayer implements GrimUser {
 
                 this.noModifyPacketPermission = noModifyPacketPermission;
                 this.noSetbackPermission = noSetbackPermission;
-                this.disableGrim = disabledPermission;
+                this.disableGrim = disabledPermission || exemptPermission
+                        || GrimAPI.INSTANCE.getPlayerDataManager().isTemporaryExemptUser(user);
                 if (exemptPermission) {
                     GrimAPI.INSTANCE.getPlayerDataManager().exemptUser(user);
                 }
@@ -1112,7 +1117,8 @@ public class GrimPlayer implements GrimUser {
 
     // TODO (Cross-platform) keep track of world at packet level; do not rely on potentially non-lag-compensated platformPlayer.getWorld()
     public Location getLocation() {
-        return new Location(platformPlayer.getWorld(), this.x, this.y, this.z, this.yaw, this.pitch);
+        return new Location(platformPlayer == null ? null : platformPlayer.getWorld(),
+                this.x, this.y, this.z, this.yaw, this.pitch);
     }
 
     // Looked up on first use, the server can send tags during configuration before pollData's first tick

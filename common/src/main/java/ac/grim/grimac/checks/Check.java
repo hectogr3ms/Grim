@@ -14,6 +14,7 @@ import lombok.Setter;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.Locale;
 import java.util.Objects;
 import java.util.function.Supplier;
 
@@ -90,7 +91,7 @@ public class Check extends GrimProcessor implements AbstractCheck {
     }
 
     public final void updatePermissions() {
-        final String id = getConfigName().toLowerCase();
+        final String id = getConfigName().toLowerCase(Locale.ROOT);
         exemptPermission = player.hasPermission("grim.exempt." + id);
         noSetbackPermission = player.hasPermission("grim.nosetback." + id);
         noModifyPacketPermission = player.hasPermission("grim.nomodifypacket." + id);

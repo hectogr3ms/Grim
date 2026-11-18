@@ -71,6 +71,8 @@ public class Reach extends Check implements PacketReceiveListener {
     private boolean cancelImpossibleHits;
     private double threshold;
     private double cancelBuffer; // For the next 4 hits after using reach, we aggressively cancel reach
+    // Vehicle positions lag the client, so allow a bounded margin instead of skipping reach entirely.
+    private static final double VEHICLE_REACH_ALLOWANCE = 1.0;
 
     public Reach(GrimPlayer player) {
         super(player);
@@ -126,8 +128,6 @@ public class Reach extends Check implements PacketReceiveListener {
             return;
         if (player.gamemode == GameMode.CREATIVE || player.gamemode == GameMode.SPECTATOR)
             return;
-        if (player.inVehicle()) return;
-        if (entity.riding != null) return;
 
         ItemStack currentStack = player.inventory.getItemInHand(hand);
         ItemStack startStack = player.inventory.getStartOfTickStack();
@@ -181,15 +181,17 @@ public class Reach extends Check implements PacketReceiveListener {
             }
         }
 
+        boolean vehicleReach = player.inVehicle() || entity.riding != null;
+
         boolean tooManyAttacks = playerAttackQueue.size() > 10;
         if (!tooManyAttacks) {
             playerAttackQueue.put(entityId, new InteractionData(
                     player.x, player.y, player.z,
-                    hasRange, maxReach, hitboxMargin, attackRangeMovement
+                    hasRange, maxReach, hitboxMargin, attackRangeMovement, vehicleReach
             )); // Queue for next tick for very precise check
         }
 
-        boolean knownInvalid = attackRangeMovement == null && isKnownInvalid(entity, hasRange, maxReach, hitboxMargin);
+        boolean knownInvalid = attackRangeMovement == null && isKnownInvalid(entity, hasRange, maxReach, hitboxMargin, vehicleReach);
 
         if ((shouldModifyPackets() && cancelImpossibleHits && knownInvalid) || tooManyAttacks) {
             event.setCancelled(true);
@@ -205,24 +207,23 @@ public class Reach extends Check implements PacketReceiveListener {
     // than this method.  If this method flags, the other method WILL flag.
     //
     // Meaning that the other check should be the only one that flags.
-    private boolean isKnownInvalid(PacketEntity reachEntity, boolean hasAttackRange, float itemMaxReach, float itemHitboxMargin) {
+    private boolean isKnownInvalid(PacketEntity reachEntity, boolean hasAttackRange, float itemMaxReach, float itemHitboxMargin, boolean vehicleReach) {
         // If the entity doesn't exist, or if it is exempt, or if it is dead
         if ((blacklisted.contains(reachEntity.getType()) || !reachEntity.isLivingEntity) && reachEntity.getType() != EntityTypes.END_CRYSTAL)
             return false; // exempt
 
         if (player.gamemode == GameMode.CREATIVE || player.gamemode == GameMode.SPECTATOR)
             return false;
-        if (player.inVehicle()) return false;
 
         // Filter out what we assume to be cheats
         if (cancelBuffer != 0) {
-            CheckResult result = checkReach(reachEntity, player.x, player.y, player.z, hasAttackRange, itemMaxReach, itemHitboxMargin, null, true);
+            CheckResult result = checkReach(reachEntity, player.x, player.y, player.z, hasAttackRange, itemMaxReach, itemHitboxMargin, null, vehicleReach, true);
             return result.isFlag();
         } else {
             SimpleCollisionBox targetBox = getTargetBox(reachEntity);
 
             double maxReach = applyReachModifiers(targetBox, hasAttackRange, itemMaxReach, itemHitboxMargin, !player.packetStateData.didLastMovementIncludePosition);
-            return ReachUtils.getMinReachToBox(player, targetBox) > maxReach;
+            return ReachUtils.getMinReachToBox(player, targetBox) > maxReach + (vehicleReach ? VEHICLE_REACH_ALLOWANCE : 0);
         }
     }
 
@@ -232,7 +233,7 @@ public class Reach extends Check implements PacketReceiveListener {
             if (reachEntity == null) continue;
 
             InteractionData interactionData = attack.getValue();
-            CheckResult result = checkReach(reachEntity, interactionData.x, interactionData.y, interactionData.z, interactionData.hasAttackRange, interactionData.maxReach, interactionData.hitboxMargin, interactionData.attackRangeMovement, false);
+            CheckResult result = checkReach(reachEntity, interactionData.x, interactionData.y, interactionData.z, interactionData.hasAttackRange, interactionData.maxReach, interactionData.hitboxMargin, interactionData.attackRangeMovement, interactionData.vehicleReach, false);
             switch (result.type()) {
                 case REACH -> flag(
                         V.write(verbose()).f64(result.minDistance()).uint(Math.max(0, reachEntity.getType().getId(PacketEvents.getAPI().getServerManager().getVersion().toClientVersion()))),
@@ -257,11 +258,13 @@ public class Reach extends Check implements PacketReceiveListener {
     }
 
     @NotNull
-    private CheckResult checkReach(PacketEntity reachEntity, double x, double y, double z, boolean hasAttackRange, float itemMaxReach, float itemHitboxMargin, Vector3dm attackRangeMovement, boolean isPrediction) {
+    private CheckResult checkReach(PacketEntity reachEntity, double x, double y, double z, boolean hasAttackRange, float itemMaxReach, float itemHitboxMargin, Vector3dm attackRangeMovement, boolean vehicleReach, boolean isPrediction) {
         SimpleCollisionBox targetBox = getTargetBox(reachEntity);
 
         double movementAllowance = attackRangeMovement == null ? 0 : getAttackRangeMovementAllowance(attackRangeMovement);
-        double maxReach = applyReachModifiers(targetBox, hasAttackRange, itemMaxReach, itemHitboxMargin, !player.packetStateData.didLastLastMovementIncludePosition) + movementAllowance;
+        double maxReach = applyReachModifiers(targetBox, hasAttackRange, itemMaxReach, itemHitboxMargin,
+                !player.packetStateData.didLastLastMovementIncludePosition)
+                + movementAllowance + (vehicleReach ? VEHICLE_REACH_ALLOWANCE : 0);
         double minDistance = Double.MAX_VALUE;
 
         // https://bugs.mojang.com/browse/MC-67665
@@ -400,5 +403,6 @@ public class Reach extends Check implements PacketReceiveListener {
     }
 
     private record InteractionData(double x, double y, double z, boolean hasAttackRange,
-                                   float maxReach, float hitboxMargin, Vector3dm attackRangeMovement) {}
+                                   float maxReach, float hitboxMargin, Vector3dm attackRangeMovement,
+                                   boolean vehicleReach) {}
 }
